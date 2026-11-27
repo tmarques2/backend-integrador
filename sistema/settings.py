@@ -1,5 +1,8 @@
 import os
 from pathlib import Path
+import dj_database_url
+import os
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 try:
@@ -8,9 +11,22 @@ try:
 except ImportError:
     pass
 
+load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me-before-deploy")
-DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() in ("1", "true", "yes")
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver").split(",") if h.strip()]
+
+DEBUG = True
+
+ALLOWED_HOSTS = [
+ "localhost",
+ "127.0.0.1",
+ ".up.railway.app",
+]
+
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
+
+CSRF_TRUSTED_ORIGINS = [
+ "https://*.up.railway.app",
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -26,6 +42,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -51,28 +68,12 @@ ASGI_APPLICATION = "sistema.asgi.application"
 
 # SQLite é o padrão para desenvolvimento. Para MySQL, configure DB_ENGINE=mysql
 # e as variáveis DB_NAME, DB_USER, DB_PASSWORD, DB_HOST e DB_PORT.
-if os.environ.get("DB_ENGINE", "sqlite").lower() == "mysql":
-    DATABASES = {"default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.environ.get("DB_NAME", "atlaslab"),
-        "USER": os.environ.get("DB_USER", "root"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-        "PORT": os.environ.get("DB_PORT", "3306"),
-        "OPTIONS": {"charset": "utf8mb4"},
-    }}
-else:
-    DATABASES = {"default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    }}
-
-AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
-]
+DATABASES = {
+    "default": dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+    )
+}
 # O primeiro algoritmo é usado para novas senhas; PBKDF2 fica disponível para
 # verificação de hashes legados, caso existam.
 PASSWORD_HASHERS = [
@@ -101,7 +102,18 @@ TIME_ZONE = "America/Sao_Paulo"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 CORS_ALLOWED_ORIGINS = [
