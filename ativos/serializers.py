@@ -1,0 +1,235 @@
+from django.contrib.auth.hashers import make_password
+from rest_framework import serializers
+
+from .models import (
+    Ativo, DenunciaF, GrupoA, LogAcao, ManutencaoA, MovimentacoesA, Notificacao,
+    OrdemServico, SalaLab, SolicitacaoCadastro, Usuario,
+)
+
+
+class UsuarioResumoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ["id_user", "nome", "email", "cargo"]
+        read_only_fields = fields
+
+
+class ResponsavelSalaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Usuario
+        fields = ["id_user", "nome", "cargo"]
+        read_only_fields = fields
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    senha = serializers.CharField(write_only=True, min_length=8, required=True, trim_whitespace=False)
+    salas_responsaveis = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            "id_user", "nome", "email", "cargo", "foto", "senha",
+            "salas_responsaveis", "criado_em", "atualizado_em",
+        ]
+        read_only_fields = ["id_user", "criado_em", "atualizado_em"]
+
+    def validate_nome(self, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("O nome deve ter pelo menos 3 caracteres.")
+        return value
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        qs = Usuario.objects.filter(email__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Este e-mail já está cadastrado.")
+        return value
+
+    def create(self, validated_data):
+        validated_data["senha"] = make_password(validated_data["senha"])
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        senha = validated_data.get("senha")
+        if senha:
+            validated_data["senha"] = make_password(senha)
+        return super().update(instance, validated_data)
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    senha = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class CadastroSerializer(serializers.Serializer):
+    nome = serializers.CharField(max_length=150)
+    email = serializers.EmailField(max_length=254)
+    senha = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+
+    def validate_nome(self, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise serializers.ValidationError("O nome deve ter pelo menos 3 caracteres.")
+        return value
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if Usuario.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Este e-mail já está cadastrado.")
+        if SolicitacaoCadastro.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Já existe uma solicitação para este e-mail.")
+        return value
+
+    def create(self, validated_data):
+        validated_data["senha_hash"] = make_password(validated_data.pop("senha"))
+        return SolicitacaoCadastro.objects.create(**validated_data)
+
+
+class SolicitacaoCadastroSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SolicitacaoCadastro
+        fields = ["id", "nome", "email", "criada_em"]
+        read_only_fields = fields
+
+
+class NotificacaoSerializer(serializers.ModelSerializer):
+    lida = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notificacao
+        fields = [
+            "id", "mensagem", "criada_em", "lida", "entidade", "entidade_id",
+            "acao", "destino",
+        ]
+        read_only_fields = fields
+
+    def get_lida(self, notificacao):
+        return notificacao.lida_em is not None
+
+
+class GrupoASerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GrupoA
+        fields = "__all__"
+
+
+class SalaLabSerializer(serializers.ModelSerializer):
+    responsavel_detalhes = UsuarioResumoSerializer(source="responsavel", read_only=True)
+
+    class Meta:
+        model = SalaLab
+        fields = [
+            "id_sala", "nome", "numero_ta", "localizacao", "descricao",
+            "responsavel", "responsavel_detalhes",
+        ]
+
+
+class DenunciaFSerializer(serializers.ModelSerializer):
+    usuario = UsuarioResumoSerializer(read_only=True)
+
+    class Meta:
+        model = DenunciaF
+        fields = ["id_denuncia", "descricao", "imagem", "classificacao", "usuario", "criado_em"]
+        read_only_fields = ["id_denuncia", "usuario", "criado_em"]
+
+
+class AtivoSerializer(serializers.ModelSerializer):
+    grupo_detalhes = GrupoASerializer(source="grupo", read_only=True)
+    local_origem_detalhes = SalaLabSerializer(source="local_origem", read_only=True)
+    local_atual_detalhes = SalaLabSerializer(source="local_atual", read_only=True)
+
+    class Meta:
+        model = Ativo
+        fields = [
+            "id_ativos", "nome", "qr_code", "status", "local_origem",
+            "local_origem_detalhes", "local_atual", "local_atual_detalhes",
+            "descricao", "grupo", "grupo_detalhes", "criado_em", "atualizado_em",
+        ]
+        read_only_fields = ["id_ativos", "qr_code", "criado_em", "atualizado_em"]
+
+
+class ManutencaoASerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ManutencaoA
+        fields = "__all__"
+
+
+class OrdemServicoSerializer(serializers.ModelSerializer):
+    usuario_ids = serializers.PrimaryKeyRelatedField(
+        source="usuarios", queryset=Usuario.objects.all(), many=True, required=False, write_only=True
+    )
+    sala_ids = serializers.PrimaryKeyRelatedField(
+        source="salas", queryset=SalaLab.objects.all(), many=True, required=False, write_only=True
+    )
+    ativo_ids = serializers.PrimaryKeyRelatedField(
+        source="ativos", queryset=Ativo.objects.all(), many=True, required=False, write_only=True
+    )
+    manutencao_ids = serializers.PrimaryKeyRelatedField(
+        source="manutencoes", queryset=ManutencaoA.objects.all(), many=True, required=False, write_only=True
+    )
+    responsavel_detalhes = UsuarioResumoSerializer(source="responsavel", read_only=True)
+    usuarios_detalhes = UsuarioResumoSerializer(source="usuarios", many=True, read_only=True)
+    salas_detalhes = SalaLabSerializer(source="salas", many=True, read_only=True)
+    ativos_detalhes = AtivoSerializer(source="ativos", many=True, read_only=True)
+    manutencoes_detalhes = ManutencaoASerializer(source="manutencoes", many=True, read_only=True)
+
+    class Meta:
+        model = OrdemServico
+        fields = [
+            "id_ordem", "titulo", "descricao", "descricao_conclusao", "data_hora",
+            "data_termino", "status",
+            "responsavel", "responsavel_detalhes",
+            "usuario_ids", "sala_ids", "ativo_ids", "manutencao_ids",
+            "usuarios_detalhes", "salas_detalhes", "ativos_detalhes", "manutencoes_detalhes",
+        ]
+        read_only_fields = ["id_ordem"]
+
+    def validate(self, attrs):
+        status_value = attrs.get(
+            "status",
+            self.instance.status if self.instance else OrdemServico.Status.ABERTA,
+        )
+        descricao_conclusao = attrs.get(
+            "descricao_conclusao",
+            self.instance.descricao_conclusao if self.instance else "",
+        )
+
+        if status_value == OrdemServico.Status.CONCLUIDA:
+            if not descricao_conclusao or not descricao_conclusao.strip():
+                raise serializers.ValidationError({
+                    "descricao_conclusao": "Descreva o serviço realizado antes de concluir a ordem."
+                })
+            attrs["descricao_conclusao"] = descricao_conclusao.strip()
+        elif "descricao_conclusao" in attrs and descricao_conclusao:
+            attrs["descricao_conclusao"] = descricao_conclusao.strip()
+
+        return attrs
+
+
+class MovimentacoesASerializer(serializers.ModelSerializer):
+    usuario_detalhes = UsuarioResumoSerializer(source="usuario", read_only=True)
+    ativo_detalhes = AtivoSerializer(source="ativo", read_only=True)
+
+    class Meta:
+        model = MovimentacoesA
+        fields = [
+            "id_mov", "justificativa", "previsao_data_hora", "contagem_mov_a", "local_m",
+            "data_hora", "data_hora_entrada", "data_hora_saida", "usuario", "usuario_detalhes",
+            "ativo", "ativo_detalhes", "manutencao",
+        ]
+        read_only_fields = ["id_mov", "usuario", "data_hora", "data_hora_entrada"]
+
+
+class LogAcaoSerializer(serializers.ModelSerializer):
+    usuario_detalhes = UsuarioResumoSerializer(source="usuario", read_only=True)
+
+    class Meta:
+        model = LogAcao
+        fields = [
+            "id", "usuario", "usuario_detalhes", "acao", "entidade", "entidade_id",
+            "detalhes", "ip", "criado_em",
+        ]
+        read_only_fields = fields
